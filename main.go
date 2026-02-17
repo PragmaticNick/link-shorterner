@@ -36,6 +36,10 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/shorten", shorten(db))
 	mux.HandleFunc("/", get(db))
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Printf("ListenAndServe: %s", err.Error())
+	}
 }
 
 type H = map[string]string
@@ -74,7 +78,7 @@ func shorten(db *sql.DB) func(w http.ResponseWriter, r *http.Request) {
 
 func get(db *sql.DB) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		hash := r.URL.Path
+		hash := r.URL.Path[1:]
 
 		var original string
 		row := db.QueryRow("SELECT original FROM links WHERE hash = ?", hash)
