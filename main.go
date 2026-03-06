@@ -10,23 +10,19 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-
-	_ "modernc.org/sqlite"
 )
 
 type Config struct {
-	Host     string
-	Database string
+	Host string
 }
 
 func Parse() (Config, error) {
-	if len(os.Args) < 3 {
+	if len(os.Args) < 2 {
 		return Config{}, errors.New("not enough arguments")
 	}
 
 	return Config{
-		Host:     os.Args[1],
-		Database: os.Args[2],
+		Host: os.Args[1],
 	}, nil
 }
 
@@ -37,14 +33,12 @@ func main() {
 	}
 
 	db := make(map[string]string, 0)
-	if err != nil {
-		log.Fatalf("failed to create table [links]: %s", err.Error())
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/shorten", shorten(config, db))
 	mux.HandleFunc("/", get(db))
 
+	fmt.Println("Starting Server at 0.0.0.0:8080")
 	if err := http.ListenAndServe("0.0.0.0:8080", mux); err != nil {
 		log.Printf("ListenAndServe: %s", err.Error())
 	}
