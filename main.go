@@ -2,12 +2,12 @@ package main
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 
@@ -36,18 +36,7 @@ func main() {
 		log.Fatalf("failed to parse command-line arguments: %s", err.Error())
 	}
 
-	db, err := sql.Open("sqlite", config.Database)
-	if err != nil {
-		log.Fatalf("failed to open database: %s", err.Error())
-	}
-
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS links (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			original TEXT NOT NULL,
-			hash TEXT
-		)`)
-
+	db := make(map[string]string, 0)
 	if err != nil {
 		log.Fatalf("failed to create table [links]: %s", err.Error())
 	}
@@ -67,7 +56,7 @@ type input struct {
 	OriginalLink string `json:"originalLink"`
 }
 
-func shorten(config Config, db *sql.DB) func(w http.ResponseWriter, r *http.Request) {
+func shorten(config Config, db map[string]string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -97,61 +86,27 @@ func shorten(config Config, db *sql.DB) func(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func get(db *sql.DB) func(w http.ResponseWriter, r *http.Request) {
+func get(db map[string]string) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hash := r.URL.Path[1:]
 
-		var original string
-		row := db.QueryRow("SELECT original FROM links WHERE hash = ?", hash)
-		err := row.Scan(&original)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(H{"error": "original link not found"})
-				return
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		if original, ok := db[hash]; ok {
+			http.Redirect(w, r, original, http.StatusFound)
 			return
 		}
 
-		http.Redirect(w, r, original, http.StatusFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(H{"error": "original link not found"})
 	}
 }
 
-func saveLink(db *sql.DB, original string) (string, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-
-	result, err := tx.Exec("INSERT INTO links (original) values (?)", original)
-	if err != nil {
-		log.Printf("failed to insert original link: %s", err.Error())
-		return "", err
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		log.Printf("failed to get id: %s", err.Error())
-		return "", err
-	}
-
+func saveLink(db map[string]string, original string) (string, error) {
+	id := rand.Int63()
 	input := fmt.Sprintf("%s%d", original, id)
 	hashFunc := sha256.New()
 	hashFunc.Write([]byte(input))
 	hash := base64.URLEncoding.EncodeToString(hashFunc.Sum(nil))[:10]
 
-	_, err = tx.Exec("UPDATE links SET hash = ? WHERE id = ?", hash, id)
-	if err != nil {
-		log.Printf("failed to set hash: %s", err.Error())
-		return "", err
-	}
-
-	if err := tx.Commit(); err != nil {
-		log.Printf("failed to commit transaction: %s", err.Error())
-		return "", err
-	}
-
+	db[hash] = original
 	return hash, nil
 }
