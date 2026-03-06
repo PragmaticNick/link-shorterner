@@ -5,19 +5,38 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
 
-const (
-	addr = "localhost:8080"
-)
+type Config struct {
+	Host     string
+	Database string
+}
+
+func Parse() (Config, error) {
+	if len(os.Args) < 3 {
+		return Config{}, errors.New("not enough arguments")
+	}
+
+	return Config{
+		Host:     os.Args[1],
+		Database: os.Args[2],
+	}, nil
+}
 
 func main() {
-	db, err := sql.Open("sqlite", "link.db")
+	config, err := Parse()
+	if err != nil {
+		log.Fatalf("failed to parse command-line arguments: %s", err.Error())
+	}
+
+	db, err := sql.Open("sqlite", config.Database)
 	if err != nil {
 		log.Fatalf("failed to open database: %s", err.Error())
 	}
@@ -34,10 +53,10 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/shorten", shorten(db))
+	mux.HandleFunc("/shorten", shorten(config, db))
 	mux.HandleFunc("/", get(db))
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe("0.0.0.0:8080", mux); err != nil {
 		log.Printf("ListenAndServe: %s", err.Error())
 	}
 }
@@ -48,7 +67,7 @@ type input struct {
 	OriginalLink string `json:"originalLink"`
 }
 
-func shorten(db *sql.DB) func(w http.ResponseWriter, r *http.Request) {
+func shorten(config Config, db *sql.DB) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -64,13 +83,15 @@ func shorten(db *sql.DB) func(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		fmt.Printf("shorten: %s", body.OriginalLink)
+
 		hash, err := saveLink(db, body.OriginalLink)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		shortLink := fmt.Sprintf("%s/%s", addr, hash)
+		shortLink := fmt.Sprintf("%s/%s", config.Host, hash)
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(H{"shortlink": shortLink})
 	}
